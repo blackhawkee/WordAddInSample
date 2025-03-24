@@ -1,0 +1,139 @@
+Office.onReady(function () {
+    console.log("Office.js is ready");
+    document.getElementById("send-button").addEventListener("click", sendMessage);
+    document.getElementById("message-input").addEventListener("keypress", function (e) {
+        if (e.key === "Enter") sendMessage();
+    });
+});
+
+async function sendMessage() {
+    const inputField = document.getElementById("message-input");
+    const message = inputField.value.trim();
+    if (!message) return;
+
+    console.log("User message:", message);
+    appendMessage(message, "user-message");
+    inputField.value = "";
+
+    let selectedText = "";
+    await Word.run(async (context) => {
+        const range = context.document.getSelection();
+        range.load("text");
+        await context.sync();
+        selectedText = range.text;
+        console.log("Selected text from Word:", selectedText);
+    }).catch((error) => console.log("Error getting selection:", error));
+
+    const prompt = selectedText 
+        ? `Context from document: "${selectedText}". User message: ${message}` 
+        : message;
+    console.log("Prompt sent to Gemini:", prompt);
+
+    streamGeminiResponse(prompt);
+}
+
+async function streamGeminiResponse(prompt) {
+    try {
+        console.log("Starting Gemini stream request");
+        const apiKey = "AIzaSyDvg2F_x1TMDOTnFdhGxEv5R6CD2oJHaR4"; // Replace with your API key
+        const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + apiKey;
+
+        const response = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: prompt }] }],
+                generationConfig: { temperature: 0.7, maxOutputTokens: 2048 }
+            })
+        });
+
+        if (!response.ok) {
+            console.log("API response status:", response.status);
+            throw new Error(`API request failed with status ${response.status}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let llmMessageDiv = null;
+        let buffer = ""; // Buffer to accumulate chunks
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+                console.log("Stream completed");
+                break;
+            }
+
+            const chunk = decoder.decode(value, { stream: true });
+            buffer += chunk; // Add to buffer
+            console.log("Raw chunk:", chunk); // Log raw data for debugging
+
+            // Try to parse complete JSON objects from the buffer
+            let startIndex = 0;
+            while (true) {
+                try {
+                    const jsonEnd = buffer.indexOf("}", startIndex) + 1;
+                    if (jsonEnd <= 0) break; // No complete object yet
+
+                    const potentialJson = buffer.substring(startIndex, jsonEnd);
+                    const data = JSON.parse(potentialJson);
+                    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+                    
+                    if (text) {
+                        if (!llmMessageDiv) {
+                            llmMessageDiv = appendMessage("", "llm-message", true);
+                        }
+                        llmMessageDiv.textContent += text;
+                        console.log("Streamed chunk:", text);
+                        scrollToBottom();
+                    }
+
+                    // Move past this object
+                    startIndex = jsonEnd;
+                } catch (e) {
+                    // Incomplete JSON, wait for more data
+                    break;
+                }
+            }
+
+            // Keep unprocessed remainder in buffer
+            buffer = buffer.substring(startIndex);
+        }
+
+        // Process any remaining buffer content
+        if (buffer.trim()) {
+            try {
+                const data = JSON.parse(buffer);
+                const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+                if (text) {
+                    if (!llmMessageDiv) {
+                        llmMessageDiv = appendMessage("", "llm-message", true);
+                    }
+                    llmMessageDiv.textContent += text;
+                    console.log("Final streamed chunk:", text);
+                    scrollToBottom();
+                }
+            } catch (e) {
+                console.log("Error parsing final buffer:", e, "Buffer:", buffer);
+            }
+        }
+    } catch (error) {
+        console.log("Gemini Streaming Error:", error.message);
+        appendMessage(`Error: ${error.message}`, "llm-message");
+    }
+}
+
+function appendMessage(text, className, isStreaming = false) {
+    const chatContainer = document.getElementById("chat-container");
+    const messageDiv = document.createElement("div");
+    messageDiv.className = `message ${className}`;
+    messageDiv.textContent = text;
+    chatContainer.appendChild(messageDiv);
+    if (!isStreaming) scrollToBottom();
+    return messageDiv;
+}
+
+function scrollToBottom() {
+    const chatContainer = document.getElementById("chat-container");
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+}
