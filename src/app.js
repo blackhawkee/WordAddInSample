@@ -36,7 +36,7 @@ async function sendMessage() {
 async function streamGeminiResponse(prompt, selectedText, range) {
     try {
         console.log("Starting Gemini stream request");
-        const apiKey = "AIzaskdfg2F_x1TMDalsdfkds5R6CD2oJHaR4"; // Replace with your API key
+        const apiKey = "test_key"; // Replace with your API key
         const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + apiKey;
 
         const response = await fetch(url, {
